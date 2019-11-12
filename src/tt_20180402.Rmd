@@ -1,0 +1,427 @@
+---
+title: 'Tidy Tuesday 2018-Apr-02: US Tuition Costs'
+output: html_document
+---
+
+## My learning goals
+
+**Basics:**    
+- Main Tidy Tuesday objectives (I assume: tidy data, and plot absolute values and change in tuition by state)   
+- Maps (my 1st try, ever)  
+- Download functions (long overdue)  
+- (maybe, finally, I'll memorize the states that I tend to forget...)
+
+**Extensions:**    
+- Canadian version  
+- Clustering  
+- Parametric analysis of between- and within-state (or province) change  
+- Understand the fundamentals of spatial data formats and methods  
+
+## R packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(magrittr)  # for the double pipe (name?)  %<>%
+library(scico)     # colour palettes for plots
+
+```
+
+For plotting, I like the `scico` [colour palettes](https://github.com/thomasp85/scico#palettes). They offer a lot of variety and are colourblind friendly. 
+
+
+## Get the data
+
+The data for the exercise are hosted on the [R for data science 2018 data GitHub repository](https://github.com/rfordatascience/tidytuesday/tree/master/data/2018)
+
+```{r data-import}
+url <- "https://github.com/rfordatascience/tidytuesday/tree/master/data/2018/2018-04-02/us_avg_tuition.xlsx"
+destfile <- "data/us_avg_tuition.xlsx"
+# remote import not working this way but works with manual download
+# curl::curl_download(url, destfile)
+# file.exists(destfile) # even though this is true
+# neither of these work either
+# download.file(url, destfile, mode = 'wb' )
+# library(rio)
+# instadata <- rio::import(url)
+
+# gave up and did manual download...
+d <- read_xlsx(destfile)
+head(d)
+
+
+```
+
+## Tidy the data
+
+
+```{r data-tidy}
+# Assign the year variables names that are easier to type
+old.names <- names(d)
+# copy data set to experiment with
+df <- d
+# easier to handle variable names that start with a character
+# (otherwise, name quote with backticks)
+new.names <- paste0(
+  "yr", 
+  old.names[-1]
+  )
+names(df)[-1] <- new.names
+
+# Better: each time period is one academic year
+# the second year is unnecessary  
+# (but may be nice to have for factor/printing in later plots)
+new.names <- paste0(
+  "yr", 
+  str_sub(old.names[-1], start = 1, end = 4)
+  )
+names(df)[-1] <- new.names
+head(df)
+
+# any missing or duplicated data? weird tuition values?
+table(df$State, useNA = "ifany")
+summary(df)
+# looks good
+
+# lmer and ggplot will need a long format
+dl <- df %>% 
+  gather(key = "year", value = "mean_tuition", -State) %>% 
+  arrange(State, year) %>% 
+  mutate(
+    year = factor(year, 
+                  levels = sort(new.names),
+                  labels = sort(old.names[-1]),
+                  ordered = TRUE))
+dl  
+
+dl %>% group_by(State) %>% 
+  summarise(countState = n(), maxYear = max(year)) %>% 
+  print(n = 50)
+  
+```
+
+## Change in tuition
+
+### Simple net change
+
+I like the `scico` colour [palettes](https://github.com/thomasp85/scico#palettes). They offer a lot of variety and are colourblind friendly. 
+
+```{r change-net}
+# Net change
+df$net_change <-  df$yr2015 - df$yr2004
+summary(df$net_change)
+# plot net change for each state, sorting states by change
+df$statef <- factor(df$State)
+
+
+ggplot(df, aes(y = fct_reorder(statef, net_change), x = net_change,
+               fill = yr2004)) + 
+  geom_point(size = 3, shape = 21, col = "grey") +
+  scale_fill_scico(palette = "bilbao") + 
+  labs(title = "Net change in average tuition by US state from 2004-05 to 2015-16",
+       x = "Net change (US$)",
+       y = NULL, # self-explanatory
+       fill = "2004-05 tuition"
+       ) + 
+  theme_bw()
+
+```
+
+States had a wide range of change in average tuition over the eleven years from 2004-05 academic year to 2015-16. Only Ohio's mean tuition decreased, and that only by US$182. 
+
+I wondered whether states that had a large increase started out in 2004 with low tuition and states with small changes started out with high tuition; that is, was there an inverse correlation (qualitatively, not necessarily linear) between starting tuition and the net change? Ohio and Hawaii seem to support this hypothesis, but there was no obvious correlation, overall. I will test the hypothesis, statistically, later. 
+
+But, first, a map:
+
+```{r change-net-map}
+# reference: http://eriqande.github.io/rep-res-web/lectures/making-maps-with-R.html
+library(map)
+library(mapdata)
+library(ggmap)
+#
+
+usa <- map_data("state")
+summary(usa)
+#table(usa$group, usa$region, useNA = "ifany")
+#table(usa$subregion, usa$region, useNA = "ifany")
+ggplot(data = usa) + 
+  geom_polygon(aes(x = long, y = lat, fill = region, group = group), 
+               color = "white") + 
+  coord_fixed(1.3) +
+  guides(fill=FALSE)  # do this to leave off the color legend
+
+# it works!
+
+# Change name of state name variable from "region" to "state2
+names(usa)[5] <- "state2"
+usa$subregion <- NULL
+head(usa)
+
+# join to wide tuition data set
+df1 <- df %>% 
+  # convert state name to lower case in 
+  mutate(state2 = tolower(State)) %>% 
+  full_join(usa, by = "state2")
+
+# did all states find a match?
+summary(df1) # nope. why?
+df1[is.na(df1$state2), ] # none
+df1$state2[is.na(df1$State)] # no tuition data for DC
+# good oppotunity to learn how to have a special fill colour 
+# for a level (state) with missing value 
+
+
+ggplot(data = df1) + 
+  geom_polygon(aes(x = long, y = lat, fill = net_change, 
+                   group = group), 
+               color = "grey") + 
+  scale_fill_scico(palette = "bilbao") + 
+  coord_fixed(1.3) +
+  theme_void() + 
+  labs(
+    title = "Net change in average tuition by US state from 2004-05 to 2015-16",
+    fill = "Net change (US$)",
+    caption = "no data for D.C."
+  )
+
+```
+
+Might be better to use the "sf" data format for maps. The data from `maps` package can be converted to sf with `st_as_sf()` (see this [r-spatial tutorial](https://www.r-spatial.org/r/2018/10/25/ggplot2-sf-2.html)). 
+
+**Goal**: overcome `gganimate` error by trying `geom_sf()` or the `tmap` package.
+
+```{r change-long}
+# using data from all years
+dl2 <- dl %>% 
+  group_by(State) %>% 
+  mutate(
+    # year as a interval data
+    yearn = as.numeric(year) + 2003,
+    # yearly change
+    change = mean_tuition - lag(mean_tuition)
+  )
+# Did mean tuition ever decrease?
+summary(dl2$change)
+hist(dl2$change, breaks = 50, main = "Annual tuition changes",
+     xlab = "Annual change (US$)", col = "grey")
+# occasionally
+
+# non-parameteric curve for each state
+# 50 states on one plot may be difficult to read
+# facet by census region
+# could use ifelse statements, but case-when may be clearer 
+# dput(df$State)
+west  <- c( 
+  "Alaska", "Arizona", "California", "Colorado", "Idaho", "Hawaii", 
+  "Montana", "Nevada", "New Mexico", "Oregon", "Utah", "Washington", 
+  "Wyoming")
+
+ne    <- c(
+  "Connecticut", "Maine", "Massachusetts", "New Hampshire", 
+  "New Jersey", "New York", "Pennsylvania", "Rhode Island", 
+  "Vermont")
+                 
+mw    <- c(
+  "Illinois", "Indiana", "Iowa", "Kansas", "Michigan", "Minnesota",
+  "Missouri", "Nebraska", "North Dakota", "Ohio", "South Dakota", 
+  "Wisconsin")
+
+south <- c(
+  "Alabama", "Arkansas", "Delaware", "Florida", "Georgia",
+  "Kentucky", "Louisiana", "Maryland", "Mississippi", 
+  "North Carolina", "Oklahoma", "South Carolina", "Tennessee", 
+  "Texas", "Virginia", "West Virginia")
+
+viridisLite::plasma(16)
+
+dl3 <- dl2 %>% mutate(
+  region = case_when(
+    State %in% west    ~ "West",
+    State %in% mw      ~ "Midwest",
+    State %in% ne      ~ "Northeast",
+    State %in% south   ~ "South"
+  ) 
+) %>% 
+  arrange(region, State) 
+
+states <- dl3 %>% 
+  filter(yearn == max(yearn)) %>% 
+  mutate(yearn = 2015.2) %>% 
+  dplyr::select(State, yearn, mean_tuition, region) %>%
+  arrange(region, mean_tuition) #%>% 
+  # need a solution to prevent label overlap 
+  # group_by(region) %>% 
+  # mutate(
+  #   mean_tuition2 = ifelse(
+  #   mean_tuition - lead(mean_tuition) < ))
+
+ggplot(dl3, aes(x = yearn, y = mean_tuition, col = State, label = State)) +
+  geom_line() +
+  geom_text(data = states, aes(x = yearn, y = mean_tuition, 
+                               col = State, label = State),
+            #check_overlap = TRUE, # this simply doesn't print some
+            hjust = 0) +
+#  scale_color_viridis_d(option = "C") + # yellow is too light
+  facet_wrap(~region, ncol= 2) + 
+  coord_cartesian(xlim = c(2004, 2020)) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(title = "Average tuition by US state from 2004 to 2015", 
+       x = "Year", y = "Average tuition (US$)")
+
+
+```
+
+Many states seem to have a kink in the tuition line around 2008-09. Recession related?
+
+
+## Annimate map with annual tuition averages
+
+Taking cues from [d4tagirl](https://d4tagirl.com/2017/05/how-to-plot-animated-maps-with-gganimate)
+
+And the help page for [`transition_states`](https://gganimate.com/reference/transition_states.html) implies that the concept underlying an animated ggplot is a `facet_wrap`ped plot. I tried it both ways.
+
+> *Here I go, here I go...*
+
+```{r long-map-animate}
+dc <- dl3 %>% ungroup() %>% 
+  filter(State == "Alabama") %>% 
+  mutate(State = "District of Columbia",
+         region = "South",
+         mean_tuition = 4000, change = 0)
+dl4 <- dl3 %>% ungroup() %>% 
+  bind_rows(dc) %>% 
+  # convert state name to lower case in 
+  mutate(state2 = tolower(State)) %>% 
+  full_join(usa, by = "state2") %>% 
+  dplyr::select(state2, yearn, mean_tuition, long, lat, group,
+                order) %>% 
+  arrange(group, state2, yearn, order) %>% 
+  distinct() %>% 
+  filter(yearn >= 2004, yearn <=2010)
+
+# 2004 plot
+dl4 %>% filter(yearn == 2004) %>% 
+  ggplot(.) + 
+    geom_polygon(aes(x = long, y = lat, fill = mean_tuition, 
+                     group = group), 
+                 color = "grey") + 
+    scale_fill_scico(palette = "bilbao") + 
+    geom_text(aes(y = 48, x = -78, label = as.character(2004)),
+              size=10, fontface="bold") +
+    coord_fixed(1.3) +
+    theme_void() + 
+    labs(
+      title = "Average tuition by US state from 2004-05 to 2015-16",
+      subtitle = ,
+      fill = "US dollars",
+      caption = "no data for D.C."
+    )
+
+# facet_wrap by year
+ggplot(dl4) + 
+  geom_polygon(aes(x = long, y = lat, fill = mean_tuition, 
+                   group = group), 
+               color = "grey") + 
+  scale_fill_scico(palette = "bilbao") + 
+  coord_fixed(1.3) +
+  facet_wrap(~yearn, ncol = 3) +
+  theme_void() +
+  labs(
+    title = "Average tuition by US state from 2004-05 to 2015-16\n",
+    fill = "US dollars",
+    caption = "no data for D.C."
+  ) 
+
+# animated plot
+# library(gganimate)
+# library(tweenr)
+# library(transformr)
+plot(usa$long, usa$lat, xlim = c(-130, -70), ylim = c(20, 50))
+library(tmap)
+tm_shape(usa) + tm_borders()
+
+tuition_map <- ggplot(dl4, aes(x = long, y = lat, fill = group, 
+                   group = group)) + 
+  geom_polygon(color = "grey") + 
+  facet_wrap(~yearn, ncol = 3) +
+  scale_fill_scico(palette = "bilbao") + 
+  coord_fixed(1.3) 
+
+tuition_map +
+  #facet_wrap(~year, ncol = 3) +
+  # theme_void() +
+  # labs(
+  #   title = "Average tuition by US state from 2004-05 to 2015-16\n",
+  #   fill = "US dollars",
+  #   caption = "no data for D.C."
+  # ) +
+  # geom_text(data = dl4, 
+  #           aes(y = 48, x = -78, label=as.character(yearn)),
+  #           size=10, fontface="bold") +
+  transition_states(yearn) 
+  
+# Not working!! Can't figure it out
+
+```
+
+
+```{r try-someones}
+# import csv file
+dt <- read_csv("data/Bevolkerungsbewegung_Wanderungen.csv")
+# add id variable
+dt$id <- c(1:63)
+# change name of first variable
+colnames(dt)[1] <- 'district'
+# convert from wide to long
+dt <- reshape2::melt(dt, id.vars=c("district","id"))
+# change name of third variable
+colnames(dt)[3] <- 'year'
+
+
+```
+
+
+### Parameteric/smoothed time trend 
+
+```{r long-fixed}
+# is the US-level trend best described as linear or curved
+# fixed effects
+attr(dl2$statef)
+
+```
+
+
+```{r long-mixed}
+
+library(lme4)
+library(lmerTest)
+
+```
+
+
+## What happened in Canada over the same time period?
+
+Statistics Canada provides tuition fees by province from 2006 to the present. This may be a little different from the American data; average tuition per capita or across eligible institutions (i.e. population weighted or not?) and it is stratified by undergrad vs grad and Canadian vs International student tuition. (What about provincial residents vs out-of-province?) Anyway, this is just an exercise, but it highlights the questions that arise when delving into real data.
+
+
+The table was downloaded from <https://www150.statcan.gc.ca/t1/tbl1/en/cv.action?pid=3710004501#timeframe> on Nov 10, 2019. No data was provided for the Yukon.
+
+
+```{r canada-data}
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
