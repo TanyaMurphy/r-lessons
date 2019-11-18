@@ -364,6 +364,10 @@ tuition_map +
   
 # Not working!! Can't figure it out
 
+# Michael Toth's manual approach
+https://michaeltoth.me/mapping-legal-marijuana-states-and-medical-marijuana-states-1995-2019.html#mapping-legal-marijuana-states-and-medical-marijuana-states-1995-2019
+
+
 ```
 
 
