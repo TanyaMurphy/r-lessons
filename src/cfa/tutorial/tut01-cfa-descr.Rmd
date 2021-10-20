@@ -1,0 +1,438 @@
+---
+title: "Statistical report: descriptive statistics for ChEAT FA tutorial with Abd ElHafeez (2021) data of vaccination psychological antecedents" 
+author: "Tanya Murphy" 
+date: "`r format(Sys.time(), '%d %B, %Y')`" 
+bibliography: "../library.bib" 
+---
+
+<!-- State purpose of this section. 
+It's nice to be able to use each child.Rmd as a stand-alone script in intermediate steps, so controlling data and environment set-up selectively with eval=TRUE/FALSE is useful. 
+However, cannot reuse chunk names anywhere through the whole, compiled report
+-->
+
+```{r prep, eval=FALSE, include=FALSE}
+# when knitting word docx, may not want code, but in html it is folded
+# by default so might as well include it
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo=FALSE)
+knitr::opts_knit$set(cache=FALSE)
+# load options, libraries, data, etc
+source("fa setup.R", echo = TRUE)
+datapath <- "tutorial"
+```
+
+## Import Abd ElHafeez (2021) open data 
+
+
+
+```{r data}
+# d0 <- read_excel("[path]/cheat-cfa/CFA tutorial/ElHafeez 2021/ElHafeez_Data_Plos_submission.xlsx", sheet = "descriptive")
+# write_rds(d0, file.path(datapath, "elhafeez.Rds"))
+df <- read_rds(file.path(datapath, "elhafeez.Rds"))
+#names(df)
+# summary(d0)
+
+score_collapse3 <- function(x) {
+  factor(if_else(x < 3, 0, if_else(x > 5, 2, 1)),
+         ordered = TRUE)
+}
+
+df1 <- df %>% 
+  mutate(sum5C = rowSums(across(A:O), na.rm = FALSE)) %>% 
+  filter(!is.na(sum5C)) %>%  # unnecessary - no missing scores
+  select(ID, A:O) %>% 
+  # create 3-level ordered score for each 
+  # (not generally recommended - only for illustration of ordinal CFA)
+  mutate_at(LETTERS[1:15], list(cat = score_collapse3))
+summary(df1)
+
+``` 
+
+<!-- heading level should start one below its section heading level in index.Rmd -->
+
+## Descriptive stats for questionnaire items 
+
+```{r desc-items, message = FALSE, warning=FALSE, echo=FALSE}
+library(ltm)
+#names(df1)
+cha.desc <- descript(df1[, 17:31])
+# str(cha.desc)
+cha.desc <- as.data.frame(round(100*cha.desc$perc, 1))
+names(cha.desc) <- c("disagree", "neutral", "agree")
+# ChEAT item wording
+cha.desc$Item <- c(
+  "Confidence 1"
+, "Confidence 2"
+, "Confidence 3"
+, "Complacency 1"
+, "Complacency 2"
+, "Complacency 3"
+, "Constraints 1"
+, "Constraints 2"
+, "Constraints 3"
+, "Calculation 1"
+, "Calculation 2"
+, "Calculation 3"
+, "Collective responsibility 1"
+, "Collective responsibility 2"
+, "Collective responsibility 3"
+)
+
+kable(cha.desc[, c(4, 1:3)], caption = "Frequency of item responses (as percent)", row.names = FALSE) %>% 
+  kableExtra::kable_styling()
+
+cha.desc_sorted <- cha.desc[order(cha.desc$disagree), c(4, 1:3)]
+kable(cha.desc_sorted, caption = "Frequency of item responses (as percent) sorted from least to most agreement", row.names = FALSE) %>% 
+  kableExtra::kable_styling()
+
+```
+
+```{r}
+lcht <- gather(df1[, c(1, 17:31)], item, response, -ID) %>% 
+  arrange(ID, item)
+head(lcht, 30)
+table(lcht$item, lcht$response, useNA = "ifany")
+lchf <- lcht %>% 
+  mutate(response = factor(response, ordered = TRUE,
+                           levels = c(0, 1, 2),
+                           labels = c("disagree", "neutral", "agree")))
+kable(prop.table(table(lchf$item, lchf$response, useNA = "ifany"), 
+                 margin = 1), digits = 3) %>% 
+  kable_styling()
+
+pt <- as.data.frame(prop.table(table(lchf$item, lchf$response), margin = 1))
+str(pt)
+names(pt) <- c("item", "response", "prop")
+g <- ggplot(pt, aes(y=prop, x=fct_rev(item), fill = response))
+gg <- g + geom_bar(stat = "identity",
+             position = position_stack(reverse = TRUE)) +
+  coord_flip() + theme_bw() + 
+  theme(legend.position = "top", text = element_text(size=16),
+               axis.title.y = element_text(margin = margin(t = 0, r = 15,
+                                                   b = 0, l = 0)),
+       axis.title.x = element_text(margin = margin(t = 15, r = 0,
+                                                   b = 0, l = 0))) +
+  scale_fill_grey(start = 0.8, end = 0.2, 
+                  guide = guide_legend(title = "Response")) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Frequency of VPA item (percent)", x = "Item") 
+gg       
+
+ggsave("tutorial/item_freq.png", gg, height = 8, width = 8)
+
+
+```
+
+
+```{r cfa-normal}
+# Prepare the data for CFA
+dfn <- df1[, 2:16]
+
+# 5-factor model, no items 12 and 15 (main analysis)
+cfaF5n.mod <- 
+    ' F1 =~ A + B + C 
+      F2 =~ D + E + F  
+      F3 =~ G + H + I
+      F4 =~ J + K + L
+      F5 =~ M + N + O'
+# std.lv=TRUE scales estimates to factors with a variance of 1
+cfaF5n.res <- cfa(cfaF5n.mod, data = dfn, std.lv=TRUE)
+summary(cfaF5n.res)
+
+```
+
+```{r cfa-ordinal}
+# Prepare the data for CFA
+dfo <- df1[, 17:31]
+
+# 5-factor model, no items 12 and 15 (main analysis)
+cfaF5o.mod <- 
+    ' F1 =~ A_cat + B_cat + C_cat 
+      F2 =~ D_cat + E_cat + F_cat  
+      F3 =~ G_cat + H_cat + I_cat
+      F4 =~ J_cat + K_cat + L_cat
+      F5 =~ M_cat + N_cat + O_cat'
+cfaF5o.res <- cfa(cfaF5o.mod, data = dfo, std.lv=TRUE)
+summary(cfaF5o.res)
+
+```
+
+
+### Reliability
+
+- Cronbach's alpha: traditional reliability stat, on the scale of 
+correlation coefficients
+- Omega-3 coefficient: one of the three "composite reliability" coefficients, omega-3 best for categorical (or ordinal) items [ref - Holdago-Tello?]
+
+The difference: 
+
+[Muthen posted, quoting Tenko Raykov](http://www.statmodel.com/discussion/messages/9/13626.html?1490902930):
+
+> ..."For the setting described (congeneric model, no error covariances), coefficient alpha can be a serious under-estimate of scale reliability even at the population level (if the entire population was studied), and obviously in a given sample the same may happen. The underlying reason is discussed in detail and 'qualitative terms' in Novick & Lewis, Psychometrika, 1967, and in 'quantitative terms' in Raykov, 1997, MBR. 
+> 
+> Simply put, it boils down to the extent to which the construct loadings (factor loadings) are dissimilar - the more they are so, the more pronounced the underestimation 'bias' of alpha is. (Examples of this kind are also given in Raykov, 1997, and Raykov, 2001, BJMSP). The alternative formula used by the colleague asking this question, is identical to that of the 'omega' coefficient, which is reliability itself in this setting. Thus, unless the conditions indicated in Table 1 on p. 344 in Raykov, MBR, 1997, hold (when alpha is close to reliability in the population, even with somewhat dissimilar loadings), the preferred measure of reliability is the reliability coefficient itself - which would be only natural, logically - i.e., the omega coefficient mentioned above..."
+
+- Average Variance Extracted (from the items)
+
+```{r fac-reliab, results="asis"}
+# 5-factor normal
+rel.F5n <- format(reliability(cfaF5n.res), digits=4)
+rel.F5n <- as.data.frame(rel.F5n)
+
+# 5-factor ordinal
+rel.F5o <- format(reliability(cfaF5o.res), digits=4)
+rel.F5o <- as.data.frame(rel.F5o)
+
+```
+
+
+### Save results as Rdata
+```{r save-CFA}
+save(cfaF1.res, rel.F1, cfaF3.res, rel.F3, cfaF5.res, rel.F5,
+     file = "../results/cfa-main-res.Rdata")
+```
+
+
+## Format the results
+
+*See wrapper functions for sig.figs and estimates with SE or CI in "fa setup.R" file.*
+
+### Collect CFA results by type as R objects
+
+```{r cfa-output}
+load("../results/cfa-main-res.Rdata")
+# The global fit stats we plan to report
+fitchi <- c("npar", "baseline.chisq.scaled", "chisq.scaled", "df")
+fitgof <- c("cfi.scaled", "nnfi.scaled", "srmr"
+          , "rmsea.scaled", "rmsea.ci.lower.scaled"
+          , "rmsea.ci.upper.scaled")
+par.cols <- c("lhs", "rhs", "est", "se", "ci.lower", "ci.upper")
+
+# Parameter estimates notation
+# (also provides a shortcut for extracting the main results we want)
+# =~ = "is measured by"
+# ~~ = "is correlated with" 
+# or, more technically, equals residual (co)variance
+# See wrapper functions for gathering different types of estimates 
+# in 'fa setup.R'
+
+# --------- Thresholds --------------------------------------
+# From the single factor model, since it uses all items, extract the 
+# threshold estimates. They are the same for all models, regardless of 
+# number of items used or factor structure.
+# Retrieve like other estimates, but there will be 2 for each item, 
+# so convert to wide data.frame
+cfaF1.thresh <- CFAParEstims(cfaF1.res, "|") %>% 
+  mutate(est.ci = FormEstCI("%.2f", est, ci.lower, ci.upper)) %>% 
+  select(lhs, rhs, est.ci) %>% spread(rhs, est.ci)
+
+# ---- CFA global fit stats, loadings, and factor correlations --------
+# Model 0: cfaF1.res
+cfaF1.chi <- round(fitMeasures(cfaF1.res)[fitchi], 0)
+cfaF1.gof0 <- fitMeasures(cfaF1.res)[fitgof]
+cfaF1.gof <- c(cfaF1.gof0, nullRMSEA(cfaF1.res))
+names(cfaF1.gof)[length(cfaF1.gof)] <- "Baseline.RMSEA"
+cfaF1.pars <- CFAParEstims(cfaF1.res, "=~") %>% mutate(model="F1") 
+
+# Model: cfaF3.res
+cfaF3.chi <- round(fitMeasures(cfaF3.res)[fitchi], 0)
+cfaF3.gof0 <- fitMeasures(cfaF3.res, baseline.model = NULL)[fitgof]
+cfaF3.gof <- c(cfaF3.gof0, nullRMSEA(cfaF3.res))
+names(cfaF3.gof)[length(cfaF3.gof)] <- "Baseline.RMSEA"
+cfaF3.pars <- CFAParEstims(cfaF3.res, "=~") %>% mutate(model="F3")
+cfaF3.fcor <- CFAParEstims(cfaF3.res, "~~")
+
+# Model: cfaF5.res
+cfaF5.chi <- round(fitMeasures(cfaF5.res)[fitchi], 0)
+cfaF5.gof0 <- fitMeasures(cfaF5.res, baseline.model = NULL)[fitgof]
+cfaF5.gof <- c(cfaF5.gof0, nullRMSEA(cfaF5.res))
+names(cfaF5.gof)[length(cfaF5.gof)] <- "Baseline.RMSEA"
+#cfaF5.gof1 <- fitMeasures(cfaF5.res, baseline.model = cfaF3.res)[fitgof]
+cfaF5.pars <- CFAParEstims(cfaF5.res, "=~") %>% mutate(model="F5") 
+cfaF5.fcor <- CFAParEstims(cfaF5.res, "~~") 
+
+
+# Gather all stats of the same sort for main models  
+# output as article's main tables and etables as needed below
+# chi-squared statistics 
+cfa.chi <- rbind(cfaF1.chi, cfaF3.chi, cfaF5.chi)
+cfa.chi
+
+# Global/approximate goodness of fit statistics 
+cfa.gof <- rbind(cfaF1.gof, cfaF3.gof, cfaF5.gof)
+cfa.gof <- cbind.data.frame(model = gsub(".gof", "", 
+                                          dimnames(cfa.gof)[[1]]), 
+                             cfa.gof)
+cfa.gof
+
+# Stack the factor loadings (pattern coefficients) 
+cfa.pars <- rbind(cfaF1.pars, cfaF3.pars, cfaF5.pars)
+head(cfa.pars)
+
+# Group factor correlations as list (not useful as stack)
+cfa.fcor <- list(cfaF3.fcor, cfaF5.fcor)
+
+```
+
+### Table: Factor loadings and fit statistics
+
+```{r output-facload}
+# Factor loadings ----
+# For each table (main manuscript table, suppl eTable)
+# 1. choose format from est only (with 2 sig.figs), est (SE), or 
+#    est (CI)  called "est2", "estSE", and "estCI", respectively
+#    FormEst function defined in "fa Setup.R"
+# 2. reshape from long to wide - each model in a column rows are items, 
+#    sorted by factors that are nested (most common to most specific)
+# 3. out as formatted table with caption
+
+# Main manuscript table - 
+# Factor loadings (estimate only, show CIs or SEs in eTables) ----
+#names(cfa.pars)
+# 1. choose output format
+cfa.pars1 <- FormEst(cfa.pars, whichEst = "est2") 
+# 2. reshape
+# data.table is the BEST! for complex/mutlivar reshaping
+# (tidyverse (gather/spread) or base R reshape fine for single var)
+
+# Make wide table of all stats for each model -> 1 line per item
+# with data.table functions
+a <- setDT(cfa.pars1)
+b <- dcast(a, rhs ~ model, 
+           value.var = c("lhs", "est2"))
+b[] <- lapply(b, function(x) ifelse(is.na(x), "", x))
+str(b)
+df <- b %>% select(rhs, est2_F1, lhs_F3, est2_F3, lhs_F5, est2_F5) %>% 
+  arrange(lhs_F3, desc(lhs_F5), rhs)
+# Goodness of fit statistics  -----------
+#names(cfa.gof)
+# 1. choose output format
+# Make long table of all stats except rmsea (CI)
+b <- melt(cfa.gof, id.vars = "model", 
+           measure.vars = c("cfi.scaled", "nnfi.scaled", "srmr"))
+cfa.gof1 <- FormEst(b, whichEst = "est2", Est = "value", Form = "%.3f") 
+# Format rmsea differently - with 90%CI - NOTICE confidence level convention
+cfa.gof2 <- FormEst(cfa.gof[, c("model", "rmsea.scaled",
+                                "rmsea.ci.lower.scaled",
+                                "rmsea.ci.upper.scaled")], 
+                    whichEst = "estCI", Est = "rmsea.scaled", 
+                    CIL = "rmsea.ci.lower.scaled", 
+                    CIU = "rmsea.ci.upper.scaled",
+                    Form = "%.3f") 
+names(cfa.gof2) <- c("model", "est2")
+cfa.gof2$variable <- "rmsea.scaled"
+# Stack stats (all character vars now)
+a <- rbind(cfa.gof1, cfa.gof2)
+df2 <- dcast(a, variable ~ model, value.var = "est2")
+names(df2) <- c("rhs", "est2_F1", "est2_F3", "est2_F5")
+#df2
+df3 <- bind_rows(df, df2)
+kable(df3, caption = "Table 3. Factor loadings and global fit statistics for single and multifactor CFA models of the ChEAT.") %>% 
+  kable_styling() %>% 
+  add_header_above(c(" " = 1, "Single factor" = 1, "3-factor" = 2,
+                     "5-factor" = 2)) %>% 
+  group_rows("Items", 1, 24) %>% 
+  group_rows("Global fit", 25, 28)
+
+
+# eTable - estimate (95% CI) ----
+# 1. choose output format
+cfa.pars2 <- FormEst(cfa.pars, whichEst = "estCI") 
+# 2. reshape
+a <- setDT(cfa.pars2)
+b <- dcast(a, rhs ~ model, 
+           value.var = c("lhs", "estCI"))
+b[] <- lapply(b, function(x) ifelse(is.na(x), "", x))
+df <- b %>% select(rhs, estCI_F1, lhs_F3, estCI_F3, 
+                   lhs_F5, estCI_F5) %>% 
+  arrange(lhs_F3, desc(lhs_F5), rhs)
+names(df) <- c("Items", "Single factor", "3facs", "3-factor",
+                        "5facs", "5-factor")
+kable(df, caption = "eTable 3. Factor loadings (95% CI) for single and multifactor CFA models of the ChEAT.") %>% 
+  kable_styling("condensed") 
+
+```
+
+### Table: Combine factor correlations, omega-3, and AVE into one table
+
+Table 4. Between-factor correlations
+
+```{r factor-stats}
+# Factor correlations ----
+for(i in seq(cfa.fcor)){#i=2
+  fcor <- cfa.fcor[[i]]
+  fcor1 <- FormEst(fcor, whichEst="est2")
+  facs <- unique(c(fcor1$lhs, fcor$rhs))
+  x <- matrix(1, nrow=length(facs), ncol=length(facs))
+  x[lower.tri(x)] <- fcor1[, 3]
+  x <- t(x) 
+  x[lower.tri(x)] <- NA 
+  dimnames(x)[[1]] <- facs
+  dimnames(x)[[2]] <- facs
+  xf <- as.data.frame(x) %>% tibble::rownames_to_column()
+  assign(glue("F{length(xf)-1}cor"), xf)
+}
+
+a <- as.data.frame(t(rel.F3)[, -1]) %>% rownames_to_column()
+a[,2:3] <- sapply(a[, 2:3], as.numeric)
+f3stats <- full_join(F3cor, a)
+kable(f3stats, caption = "A. 3-factor", digits = 2) %>% 
+  kable_styling() 
+
+a <- as.data.frame(t(rel.F5)[, -1]) %>% rownames_to_column()
+a[,2:3] <- sapply(a[, 2:3], as.numeric)
+f5stats <- full_join(F5cor, a)
+kable(f5stats, caption = "B. 5-factor", digits = 2) %>% 
+  kable_styling() 
+
+```
+
+eTable 4A. Between-factor correlations (95% CI)
+
+```{r factor-estats-4A}
+# Add to eTable 4 (factor corrs with CI)
+# with CI for eTable
+# Factor correlations ----
+for(i in seq(cfa.fcor)){#i=2
+  fcor <- cfa.fcor[[i]]
+  fcor1 <- FormEst(fcor, whichEst="estCI")
+  facs <- unique(c(fcor1$lhs, fcor$rhs))
+  x <- matrix(1, nrow=length(facs), ncol=length(facs))
+  x[lower.tri(x)] <- fcor1[, 3]
+  x <- t(x) 
+  x[lower.tri(x)] <- NA 
+  dimnames(x)[[1]] <- facs
+  dimnames(x)[[2]] <- facs
+  xf <- as.data.frame(x) %>% tibble::rownames_to_column()
+  assign(glue("F{length(xf)-1}cor"), xf)
+}
+
+kable(F3cor, caption = "i. 3-factor") %>% kable_styling("condensed") 
+
+kable(F5cor, caption = "ii. 5-factor") %>% kable_styling("condensed")
+
+```
+
+
+eTable 4b. Compare Cronbach's alpha and omega-3 statistics
+```{r factor-estats-4B}
+kable(rel.F1[-2], caption = "i. Single-factor") %>%
+  kable_styling("condensed") 
+kable(rel.F3, caption = "ii. 3-factor") %>% kable_styling("condensed")
+kable(rel.F5, caption = "iii. 5-factor") %>% kable_styling("condensed")
+
+```
+
+# R environment {-}
+
+```{r show-renvir1-1, message=FALSE, warning=FALSE}
+print(sessionInfo(package = NULL), locale = FALSE)
+```
+
+
+
+
+
+
+
+
+
